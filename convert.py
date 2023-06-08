@@ -2,6 +2,9 @@ import numpy as np
 import pandas as pd
 from connectfour import Game
 
+# Added
+import sys
+
 def as_board(moves):
     states = np.empty((len(moves), 7*6))
     labels = np.empty((len(moves), 2))
@@ -21,5 +24,8 @@ def read_games(fname):
     for _, game in X.groupby('game'):
         yield as_board(game)
 
-X = np.vstack([np.hstack(game) for game in read_games()])
-np.save('c4.npy', X)
+if __name__ == "__main__":
+    file = sys.argv[1]
+    X = np.vstack([np.hstack(game) for game in read_games(file)])
+    np.save('c4.npy', X)
+

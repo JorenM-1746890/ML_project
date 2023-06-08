@@ -2,6 +2,14 @@ from random import random, randint
 from copy import copy, deepcopy
 import numpy as np
 from sys import stderr
+import tensorflow as tf
+from tensorflow import keras
+from time import sleep
+
+model = tf.keras.models.load_model("./model1.h5", compile=False)
+model.compile(optimizer='adam', loss=keras.losses.CategoricalCrossentropy())
+print(model.summary())
+
 
 def check_consecutive(board, consecutive=4):
     for row in board:
@@ -15,17 +23,21 @@ def check_consecutive(board, consecutive=4):
                 return row[col]
     return 0
 
+
 def diagonals(L):
     h, w = len(L), len(L[0])
     return [[L[h - p + q - 1][q] for q in range(max(p-h+1, 0), min(p+1, w))] for p in range(h + w - 1)]
+
 
 def antidiagonals(L):
     h, w = len(L), len(L[0])
     return [[L[p - q][q] for q in range(max(p-h+1,0), min(p+1, w))] for p in range(h + w - 1)]
 
+
 def argmax(x, key=lambda x: x):
     (k, i, v) = max(((key(v), i, v) for i,v in enumerate(x)))
     return (i, v)
+
 
 def starting_player():
     return 1 if randint(0, 1) == 0 else -1
@@ -143,33 +155,59 @@ class Game:
             player = player * -1
         return self.status
 
+    # Following the structure of the other functions
+    def nn_play(self, starting=None, legal_only=True, n=100, f=None):
+        player = starting if starting is not None else starting_player()
 
+        f is not None and f(self, None, None)
+        while self.status is None:
+            move = self.nn_action(player, legal_only = legal_only, n=n)
+            if not self.is_legal_move(move):
+                print("Illegal move made", player, move, file=stderr)
+            self.play_move(player, move)
+            f is not None and f(self, player, move)
+            player = player * -1
+        return self.status
 
-#game = Game([[ 0, -1,  1,  1, -1,  0,  0],
-#       [ 0,  0,  0,  1, -1,  0,  0],
-#       [ 0,  0,  0,  1,  0,  0,  0],
-#       [ 0,  0,  0,  0,  0,  0,  0],
-#       [ 0,  0,  0,  0,  0,  0,  0],
-#       [ 0,  0,  0,  0,  0,  0,  0]])
-#print(game.status, game)
-#print(game.winning(-1, n=1000))
+    # Use trained model and give certain status of the game
+    def nn_action(self, player, legal_only=True, n = 100):
+        flat_board = list([item for sublist in self.board for item in sublist])
+        normal_flat_board = [int(x) for x in flat_board]
+        print(normal_flat_board)
+        move = model.predict([normal_flat_board])
+        print(move)
+        pred_column = np.array(move[0]).argmax()
+        return pred_column
+
+"""
+game = Game([[ 0, -1,  1,  1, -1,  0,  0],
+       [ 0,  0,  0,  1, -1,  0,  0],
+       [ 0,  0,  0,  1,  0,  0,  0],
+       [ 0,  0,  0,  0,  0,  0,  0],
+       [ 0,  0,  0,  0,  0,  0,  0],
+       [ 0,  0,  0,  0,  0,  0,  0]])
+print(game.status, game)
+print(game.winning(-1, n=1000))
+"""
 
 if __name__ == "__main__":
     from io import StringIO
-    from mpi4py.futures import MPIPoolExecutor, MPICommExecutor
+    from mpi4py.futures import MPICommExecutor, MPIPoolExecutor
 
     def play_game(gameid, starting=None, legal_only=False):
         states = []
+
         def add_state(game, player, move):
             if player is not None and move is not None:
                 states.append((player, move))
 
         game = Game()
         #status = game.random_play(starting, legal_only=legal_only, f=add_state)
-        status = game.smart_play(starting, legal_only=legal_only, n=10, f=add_state)
+        #status = game.smart_play(starting, legal_only=legal_only, n=10, f=add_state)
+        status = game.nn_play(starting, legal_only=legal_only, n=10, f=add_state)
 
         io = StringIO()
-        for idx, move  in enumerate(states):
+        for idx, move in enumerate(states):
             print(gameid, idx, move[0], move[1], status, sep=",", file=io)
         return io.getvalue()
 
@@ -178,5 +216,7 @@ if __name__ == "__main__":
         yield x
 
     with MPICommExecutor() as pool:
-        for result in pool.map(play_game, range(50000), unordered=True):
+        results = pool.map(play_game, range(10), unordered=True)
+
+        for result in results:
             print(result)
