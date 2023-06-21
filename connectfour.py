@@ -1,4 +1,4 @@
-from random import random, randint
+from random import random, randint, seed
 from copy import copy, deepcopy
 import numpy as np
 from sys import stderr
@@ -6,9 +6,11 @@ import tensorflow as tf
 from tensorflow import keras
 from time import sleep
 
-model = tf.keras.models.load_model("./model1.h5", compile=False)
-model.compile(optimizer='adam', loss=keras.losses.CategoricalCrossentropy())
-print(model.summary())
+
+def load_model():
+    model = tf.keras.models.load_model("./model3.h5", compile=False)
+    model.compile(optimizer='adam', loss=keras.losses.CategoricalCrossentropy())
+    return model
 
 
 def check_consecutive(board, consecutive=4):
@@ -41,6 +43,7 @@ def argmax(x, key=lambda x: x):
 
 def starting_player():
     return 1 if randint(0, 1) == 0 else -1
+
 
 class Game:
     width = 7
@@ -111,7 +114,6 @@ class Game:
 
     def random_play(self, starting=None, legal_only=True, f=None):
         player = starting if starting is not None else starting_player()
-
         f is not None and f(self, None, None)
         while self.status is None:
             move = self.random_action(legal_only=legal_only)
@@ -156,26 +158,36 @@ class Game:
         return self.status
 
     # Following the structure of the other functions
-    def nn_play(self, starting=None, legal_only=True, n=100, f=None):
+    def nn_play(self, starting=None, model=None, legal_only=True, f=None):
         player = starting if starting is not None else starting_player()
-
         f is not None and f(self, None, None)
         while self.status is None:
-            move = self.nn_action(player, legal_only = legal_only, n=n)
+            # Neural Network play
+            move = self.nn_action(player, model, legal_only=legal_only)
             if not self.is_legal_move(move):
                 print("Illegal move made", player, move, file=stderr)
             self.play_move(player, move)
             f is not None and f(self, player, move)
+
+            # Check if NN won else continue
+            if self.status is not None:
+                return self.status
             player = player * -1
+
+            # Random play
+            move = self.random_action()
+            self.play_move(player, move)
+            f is not None and f(self, player, move)
+            player = player * -1
+
         return self.status
 
-    # Use trained model and give certain status of the game
-    def nn_action(self, player, legal_only=True, n = 100):
+    # Use trained model to return column
+    def nn_action(self, player, model, legal_only=True):
         flat_board = list([item for sublist in self.board for item in sublist])
         normal_flat_board = [int(x) for x in flat_board]
-        print(normal_flat_board)
+        normal_flat_board.append(player)
         move = model.predict([normal_flat_board])
-        print(move)
         pred_column = np.array(move[0]).argmax()
         return pred_column
 
@@ -193,6 +205,9 @@ print(game.winning(-1, n=1000))
 if __name__ == "__main__":
     from io import StringIO
     from mpi4py.futures import MPICommExecutor, MPIPoolExecutor
+    # Load model and set seed
+    model = load_model()
+    seed(1746890)
 
     def play_game(gameid, starting=None, legal_only=False):
         states = []
@@ -204,19 +219,25 @@ if __name__ == "__main__":
         game = Game()
         #status = game.random_play(starting, legal_only=legal_only, f=add_state)
         #status = game.smart_play(starting, legal_only=legal_only, n=10, f=add_state)
-        status = game.nn_play(starting, legal_only=legal_only, n=10, f=add_state)
+        status = game.nn_play(starting=1, model=model, legal_only=legal_only, f=add_state)
 
         io = StringIO()
         for idx, move in enumerate(states):
             print(gameid, idx, move[0], move[1], status, sep=",", file=io)
+
         return io.getvalue()
 
     def repeat(x):
       while True:
         yield x
 
+    score = {-1:0, 0:0, 1:0}
     with MPICommExecutor() as pool:
-        results = pool.map(play_game, range(10), unordered=True)
+        results = pool.map(play_game, range(10000), unordered=True)
 
         for result in results:
-            print(result)
+            winner = result[-3:]
+            winner = winner.strip(",")
+            score[int(winner)] += 1
+
+        print(score)
